@@ -1,0 +1,149 @@
+#!/bin/bash
+
+DIR="./"
+INDEX=1
+TOTAL_FILES=$(find ${DIR} -name "*.trees.txt" | wc -l)
+FIXED_WIDTH=$(awk '{ if (length > max) max = length } END { print max }' "${DIR}1.trees.txt")
+LINES=$(tput lines);
+highlight_text=""
+
+show_file() {
+    clear
+    if [[ -n "$highlight_text" ]]; then
+        grep --color=always -E "$highlight_text|$" "${DIR}${INDEX}.trees.txt"
+    else
+        cat "${DIR}${INDEX}.trees.txt"
+    fi
+
+    # Read and print the files side by side with proper alignment
+    #while IFS= read -r main_line || IFS= read -r stacktrace_line <&3; do
+    #    printf "%-${FIXED_WIDTH}s | %s\n" "$main_line" "$stacktrace_line"
+    #done <"${DIR}${INDEX}.txt" 3<"${DIR}${INDEX}-stacktrace.txt" 2>/dev/null
+
+    # Frame info
+    FRAME_INFO="Frame ${INDEX}/${TOTAL_FILES}"
+
+    # Calculate the column where to place the frame info
+    COLUMN=$((FIXED_WIDTH - ${#FRAME_INFO}))
+
+    # Move the cursor to the appropriate position
+    tput cup $((LINES - 1)) $COLUMN
+    echo -n "$FRAME_INFO"
+}
+
+jump_to_frame() {
+    tput cup $((LINES - 1)) 0
+    read -p "Enter frame number (1-${TOTAL_FILES}): " FRAME_NUM
+    if [[ $FRAME_NUM =~ ^[0-9]+$ ]] && [ $FRAME_NUM -ge 1 ] && [ $FRAME_NUM -le $TOTAL_FILES ]; then
+        INDEX=$FRAME_NUM
+        show_file
+    else
+        echo "Invalid frame number!"
+    fi
+}
+
+calculate_trace_size() {
+    TRACE_FILE="${DIR}${INDEX}.trace.txt"
+    TRACE_WIDTH=$(awk '{ gsub(/\x1B\[[0-9;]*[JKmsu]/, ""); if (length > max) max = length } END { print max }' "$TRACE_FILE")
+    TRACE_HEIGHT=$(wc -l < "$TRACE_FILE")
+}
+
+show_trace_box() {
+    # Calculate the size of the trace file content
+    calculate_trace_size
+
+    # Ensure the box size fits within the terminal
+    TERM_WIDTH=$(tput cols)
+    TERM_HEIGHT=$(tput lines)
+    BOX_WIDTH=$((TRACE_WIDTH + 4))  # Add padding
+    BOX_HEIGHT=$((TRACE_HEIGHT + 2))  # Add padding
+
+    # Limit the box size if it's larger than the terminal
+    if [ $BOX_WIDTH -gt $TERM_WIDTH ]; then
+        BOX_WIDTH=$TERM_WIDTH
+    fi
+    if [ $BOX_HEIGHT -gt $TERM_HEIGHT ]; then
+        BOX_HEIGHT=$TERM_HEIGHT
+    fi
+
+    # Calculate top-left corner of the box
+    START_COL=$(((TERM_WIDTH - BOX_WIDTH) / 2))
+    START_ROW=$(((TERM_HEIGHT - BOX_HEIGHT) / 2))
+
+    # Draw top border
+    tput cup $START_ROW $START_COL
+    printf "┌"
+    for ((i = 1; i < BOX_WIDTH - 1; i++)); do
+        printf "─"
+    done
+    printf "┐"
+
+    # Draw sides and content
+    TRACE_FILE="${DIR}${INDEX}.trace.txt"
+    i=1
+#    while IFS= read -r line && [ $i -lt $((BOX_HEIGHT - 1)) ]; do
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        stripped=$(echo "$line" | sed -e 's/\x1b\[[0-9;]*m//g')
+        line_length=${#stripped}
+        padding=$((BOX_WIDTH - 4 - $line_length))
+        tput cup $((START_ROW + i)) $START_COL
+        printf "│ %s%*s │" "$line" "$padding"
+        i=$((i + 1))
+    done < "$TRACE_FILE"
+
+    # Draw bottom border
+    tput cup $((START_ROW + BOX_HEIGHT)) $START_COL
+    printf "└"
+    for ((i = 1; i < BOX_WIDTH - 1; i++)); do
+        printf "─"
+    done
+    printf "┘"
+}
+
+search_and_highlight() {
+    tput cup $((LINES - 1)) 0
+    read -p "Enter text to highlight: " highlight_text
+    show_file
+}
+
+copy_to_clipboard() {
+    tput cup $((LINES - 1)) 0
+    cat "${DIR}${INDEX}.trees.txt" | xclip -selection clipboard
+    echo -n "Frame ${INDEX} copied to clipboard"
+}
+
+# Initially display the first file
+show_file
+
+# Read user input
+while true; do
+    read -rsn1 input
+    if [[ $input == $'\x1b' ]]; then
+        read -rsn2 -t 0.1 input
+        if [[ $input == "[C" ]]; then
+            # Right arrow key pressed
+            if [ -f "${DIR}$((INDEX + 1)).trees.txt" ]; then
+                INDEX=$((INDEX + 1))
+                show_file
+            fi
+        elif [[ $input == "[D" ]]; then
+            # Left arrow key pressed
+            if [ $INDEX -gt 1 ]; then
+                INDEX=$((INDEX - 1))
+                show_file
+            fi
+        fi
+   elif [[ $input == "s" ]]; then
+       show_trace_box
+        read -rsn1
+        show_file
+   elif [[ $input == ":" ]]; then
+       jump_to_frame
+   elif [[ $input == "c" ]]; then
+       copy_to_clipboard
+    elif [[ $input == "h" ]]; then
+        search_and_highlight
+   elif [[ $input == "q" ]]; then
+        break
+    fi
+done
